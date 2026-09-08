@@ -85,6 +85,58 @@ The same trap exists outside the code: a buffering proxy in front of the service
 produces *exactly* the same symptom. See
 [the RunPod proxy note](deployment.md#the-runpod-http-proxy-buffers-sse).
 
+## What happens between the POST and the first chunk
+
+Time-to-first-chunk is the product's real latency number, so it is worth
+knowing exactly what sits in that path:
+
+1. **encode the reference clip** — read from disk, resample to 16 kHz through
+   librosa, run the audio VAE encoder. **Cached** per voice (see below).
+2. **tokenize** the text and assemble the reference prefix, text tokens and
+   masks into one sequence.
+3. **prefill** — one forward pass of `base_lm` over that sequence, then
+   `residual_lm`.
+4. **one diffusion step** through `feat_decoder` (`inference_timesteps` inner
+   steps, always on a doubled batch — see below) producing the first latent
+   patch.
+5. **VAE streaming decode** of that patch, `.cpu()`, base64, SSE flush.
+
+Only step 1 was avoidable work, and it was being repeated on every request.
+
+### The reference clip is encoded once, not per request
+
+`VoxCPM.generate()` calls `build_prompt_cache()` every time it is invoked, and
+that function re-reads the clip, resamples it and re-runs the VAE encoder to
+produce a tensor that depends on nothing but the file. `LatinaVoiceEngine`
+therefore builds it once per voice and calls
+`generate_with_prompt_cache_streaming()` directly.
+
+Reuse is safe on both counts that matter. Generation only *reads* the cache —
+`_generate_with_prompt_cache` passes `ref_audio_feat` into `torch.cat`, which
+allocates new tensors and never writes back. And the encoder is not a sampler:
+`AudioVAE.encode` returns the posterior mean (`["mu"]`), so caching is not
+freezing one random draw of the voice.
+
+Repeated builds are nonetheless not bit-identical — the conv kernels reduce in
+a non-deterministic order, giving a measured max drift of 7e-4 on values
+spanning ±5.8 (about 0.01%), and the encoder is equally non-reproducible when
+handed the identical input tensor. Caching pins one draw of that float noise,
+which makes successive requests marginally *more* consistent than before.
+
+The entry is keyed on `(path, mtime, size)`, so a clip replaced through the
+studio rebuilds its own entry — there is no invalidation step to forget.
+`rescan_voices()` drops entries for deleted voices, and `warm_prompt_caches()`
+builds them all at startup so no request pays for a cold one. The whole thing
+is behind `LATINA_PROMPT_CACHE`, and turning it off restores the library call
+unchanged.
+
+### CFG is not a latency knob
+
+`solve_euler` in `unified_cfm.py` always builds a `2 * b` batch and runs the
+estimator on it — there is no `cfg_value == 1.0` branch. Raising `LATINA_CFG`
+costs nothing; lowering it saves nothing. `LATINA_TIMESTEPS` is the parameter
+that actually changes how much work step 4 does.
+
 ## Startup and readiness
 
 `api.py`'s startup handler runs `engine.load()` in a thread, so the event loop

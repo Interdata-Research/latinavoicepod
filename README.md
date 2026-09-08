@@ -230,6 +230,36 @@ if you hit that.
 On a datacenter GPU, try `LATINA_OPTIMIZE=1` — measure with `smoke_test.py`
 rather than trusting this table.
 
+### On an RTX A6000 (RunPod pod), `optimize=1`, `cfg 3.0 / 10 timesteps`
+
+Measured with `bench_ttfc.py`, 5 runs per phrase after a warmup, median:
+
+| | on the box | through the RunPod HTTPS proxy |
+|---|---|---|
+| **Time to first chunk** | **61 ms** | 302 ms |
+| Total, 2.2 s utterance | 1.6 s | 1.7 s |
+| RTF | 0.63 | 0.68 |
+| One-shot `/speak` (WAV) | 1.49 s | 1.56 s |
+
+`LATINA_PROMPT_CACHE=1` (the default) is worth 39% of the on-box figure:
+
+| | median | p95 |
+|---|---|---|
+| `LATINA_PROMPT_CACHE=0` | 100 ms | 156 ms |
+| `LATINA_PROMPT_CACHE=1` | **61 ms** | **68 ms** |
+
+It removes the variance as well as the mean, because the work it skips is a
+disk read and a librosa resample.
+
+**The proxy column is network, not compute.** Streaming genuinely streams
+through the RunPod proxy on this pod — 302 ms to first chunk against 1.7 s
+total — but the round trip swamps the server-side saving. What an external
+caller sees depends on their own RTT to the pod; measure from where your
+client actually runs.
+
+Startup on this box: ~63–106 s to `ready` with `optimize=1` (the `torch.compile`
+warmup), then under a second to warm up.
+
 ## License
 
 No license has been chosen yet, so default copyright applies — all rights

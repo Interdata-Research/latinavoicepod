@@ -9,6 +9,7 @@ the voice.
 
 from __future__ import annotations
 
+import re
 import threading
 import time
 from pathlib import Path
@@ -51,6 +52,9 @@ class LatinaVoiceEngine:
         # Guards runtime re-scans only. Deliberately NOT `self._lock`: a rescan
         # must never queue behind a 10-second generation, nor delay one.
         self._voices_lock = threading.Lock()
+        # voice id -> ((path, mtime_ns, size), prompt_cache). See _prompt_cache().
+        self._prompt_caches: dict[str, tuple] = {}
+        self._pc_lock = threading.Lock()
 
     # ------------------------------------------------------------------ #
     def scan_voices(self) -> dict[str, Voice]:
@@ -81,6 +85,8 @@ class LatinaVoiceEngine:
         print(f"[latina] ready in {time.perf_counter()-t0:.0f}s · "
               f"{self.sample_rate} Hz · voices: {list(self.voices)}", flush=True)
 
+        self.warm_prompt_caches()
+
         if config.WARMUP:
             t = time.perf_counter()
             try:
@@ -109,7 +115,12 @@ class LatinaVoiceEngine:
             if not found:
                 return self.voices          # keep the last good set
             self.voices = found             # single rebind = atomic swap
-            return self.voices
+        # Drop cached references for voices that no longer exist. Entries for
+        # voices that merely changed re-key themselves on (mtime, size).
+        with self._pc_lock:
+            for gone in set(self._prompt_caches) - set(found):
+                self._prompt_caches.pop(gone, None)
+        return self.voices
 
     @property
     def is_ready(self) -> bool:
@@ -123,22 +134,104 @@ class LatinaVoiceEngine:
         return v
 
     # ------------------------------------------------------------------ #
+    def _prompt_cache(self, v: Voice):
+        """VoxCPM2's encoded reference clip, cached per voice.
+
+        `model.generate()` calls `build_prompt_cache()` on every single request,
+        which re-reads the clip from disk, resamples it to 16 kHz through
+        librosa and re-runs the audio VAE encoder — work that depends on
+        nothing but the file, sitting directly in the time-to-first-chunk path.
+
+        Reusing one cache across requests is safe on both counts that matter:
+
+        * Generation only ever *reads* it. `_generate_with_prompt_cache` passes
+          `ref_audio_feat` into `torch.cat`, which allocates new tensors and
+          never writes back (verified by comparing the tensor before and after
+          a full generation).
+        * The encoder is not a sampler — `AudioVAE.encode` returns the
+          posterior mean (`["mu"]`), not a draw from it. Repeated builds are
+          not bit-identical, but only because the conv kernels reduce in a
+          non-deterministic order: measured max drift 7e-4 on values spanning
+          ±5.8 (~0.01%), and the encoder is equally non-reproducible when
+          handed the very same input tensor. Caching freezes one draw of that
+          float noise, which if anything makes successive requests *more*
+          consistent with each other.
+
+        Keyed on (path, mtime, size), so re-uploading a clip through the studio
+        rebuilds the entry on its own — no invalidation to remember. Returns
+        None when the fast path is unavailable, and the caller falls back.
+        """
+        if not config.PROMPT_CACHE:
+            return None
+        tts = getattr(self.model, "tts_model", None)
+        if tts is None or not hasattr(tts, "generate_with_prompt_cache_streaming"):
+            return None                      # not a VoxCPM2 model — old path
+        try:
+            st = v.wav.stat()
+        except OSError:
+            return None
+        key = (str(v.wav), st.st_mtime_ns, st.st_size)
+
+        with self._pc_lock:
+            hit = self._prompt_caches.get(v.id)
+        if hit is not None and hit[0] == key:
+            return hit[1]
+
+        try:
+            cache = tts.build_prompt_cache(reference_wav_path=str(v.wav))
+        except Exception as e:               # never fail a request over a cache
+            print(f"[latina] prompt cache unavailable for {v.id!r} "
+                  f"({type(e).__name__}: {e}); using the per-request path",
+                  flush=True)
+            return None
+        with self._pc_lock:
+            self._prompt_caches[v.id] = (key, cache)
+        return cache
+
+    def warm_prompt_caches(self) -> None:
+        """Build every voice's reference cache up front, so the first request
+        for a voice is not the one that pays for it."""
+        for v in list(self.voices.values()):
+            self._prompt_cache(v)
+
+    @staticmethod
+    def _clean(text: str) -> str:
+        """The same normalisation `voxcpm.core._generate` applies before
+        tokenising. Replicated because the fast path bypasses that function."""
+        if not isinstance(text, str) or not text.strip():
+            raise ValueError("target text must be a non-empty string")
+        return re.sub(r"\s+", " ", text.replace("\n", " "))
+
+    # ------------------------------------------------------------------ #
     def synthesize(self, text: str, voice: Optional[str] = None,
                    language: Optional[str] = None) -> np.ndarray:
         """Whole utterance as mono float32 at `self.sample_rate`."""
         if not self.is_ready:
             raise RuntimeError("engine not loaded")
         v = self.resolve(voice)
+        cache = self._prompt_cache(v)
         with self._lock:
-            audio = self.model.generate(
-                text=text,
-                reference_wav_path=str(v.wav),
-                normalize=False,
-                denoise=False,
-                cfg_value=config.CFG_VALUE,
-                inference_timesteps=config.INFERENCE_TIMESTEPS,
-                retry_badcase=config.RETRY_BADCASE,
-            )
+            if cache is not None:
+                wav, _, _ = self.model.tts_model.generate_with_prompt_cache(
+                    target_text=self._clean(text),
+                    prompt_cache=cache,
+                    min_len=2,
+                    max_len=4096,          # the value voxcpm.core passes
+                    cfg_value=config.CFG_VALUE,
+                    inference_timesteps=config.INFERENCE_TIMESTEPS,
+                    retry_badcase=config.RETRY_BADCASE,
+                )
+                audio = wav.squeeze(0).cpu().numpy()
+            else:
+                audio = self.model.generate(
+                    text=text,
+                    reference_wav_path=str(v.wav),
+                    normalize=False,
+                    denoise=False,
+                    cfg_value=config.CFG_VALUE,
+                    inference_timesteps=config.INFERENCE_TIMESTEPS,
+                    retry_badcase=config.RETRY_BADCASE,
+                )
         return np.asarray(audio, dtype=np.float32).squeeze()
 
     def synthesize_streaming(
@@ -150,19 +243,40 @@ class LatinaVoiceEngine:
         if not self.is_ready:
             raise RuntimeError("engine not loaded")
         v = self.resolve(voice)
+        # Built OUTSIDE the lock: encoding the reference does not touch
+        # generation state, so it need not hold up another request's audio.
+        cache = self._prompt_cache(v)
         with self._lock:
-            for chunk in self.model.generate_streaming(
-                text=text,
-                reference_wav_path=str(v.wav),
-                normalize=False,
-                denoise=False,
-                cfg_value=config.CFG_VALUE,
-                inference_timesteps=config.INFERENCE_TIMESTEPS,
-                # A retry would discard chunks already streamed to the caller,
-                # so it is doubly wrong on this path.
-                retry_badcase=config.RETRY_BADCASE,
-            ):
-                yield np.asarray(chunk, dtype=np.float32).squeeze()
+            if cache is not None:
+                gen = self.model.tts_model.generate_with_prompt_cache_streaming(
+                    target_text=self._clean(text),
+                    prompt_cache=cache,
+                    min_len=2,
+                    max_len=4096,          # the value voxcpm.core passes
+                    cfg_value=config.CFG_VALUE,
+                    inference_timesteps=config.INFERENCE_TIMESTEPS,
+                    # A retry would discard chunks already streamed to the
+                    # caller, so it is doubly wrong on this path. (VoxCPM2
+                    # force-disables it in streaming mode anyway.)
+                    retry_badcase=False,
+                )
+                try:
+                    for wav, _, _ in gen:
+                        yield np.asarray(wav.squeeze(0).cpu().numpy(),
+                                         dtype=np.float32).squeeze()
+                finally:
+                    gen.close()
+            else:
+                for chunk in self.model.generate_streaming(
+                    text=text,
+                    reference_wav_path=str(v.wav),
+                    normalize=False,
+                    denoise=False,
+                    cfg_value=config.CFG_VALUE,
+                    inference_timesteps=config.INFERENCE_TIMESTEPS,
+                    retry_badcase=config.RETRY_BADCASE,
+                ):
+                    yield np.asarray(chunk, dtype=np.float32).squeeze()
 
 
 # One engine per process.

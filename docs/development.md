@@ -7,6 +7,7 @@ server.py            uvicorn entry point — one worker
 handler.py           RunPod serverless entry point
 start.sh             venv + CUDA-matched torch + deps + serve
 smoke_test.py        stdlib-only; times first-audio, writes out.wav
+bench_ttfc.py        stdlib-only; median/p95 time-to-first-chunk, for A/B
 Makefile             make setup | run | bg | test | stop | docker | clean
 Dockerfile           CUDA 12.4 base, weights baked in
 latina/config.py     every setting, every one an env var
@@ -48,7 +49,27 @@ Two numbers matter, and they are not the same number:
 - **RTF**, which must stay below 1.0 or playback stutters.
 
 The smoke test is deliberately stdlib-only, so it runs against a deployed URL
-from any machine without installing anything.
+from any machine without installing anything. It defaults to
+`http://localhost:$LATINA_PORT`, falling back to 8000.
+
+### Comparing two builds
+
+`smoke_test.py` runs each phrase once, which is too noisy to judge a latency
+change. `bench_ttfc.py` repeats and reports median/p95:
+
+```bash
+.venv/bin/python bench_ttfc.py                       # local, 5 runs/phrase
+.venv/bin/python bench_ttfc.py https://host -n 10 --wav
+```
+
+```
+short    n= 5  median    61.0 ms   min    59.5   p95    67.6   | total med  689 ms  RTF 0.61
+```
+
+Report the **median and p95 of time-to-first-chunk**, not a single run — the
+work that dominates it (a disk read, a resample) is exactly the kind that
+produces a long tail. It is also stdlib-only, and sends a `User-Agent`, because
+RunPod's proxy 403s `Python-urllib`.
 
 Then **listen to `out.wav`**. No metric here catches a voice that sounds wrong.
 

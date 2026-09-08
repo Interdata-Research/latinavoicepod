@@ -7,9 +7,13 @@
 Writes out.wav so you can actually listen, and prints the latency that matters
 for a phone call: time to the FIRST audio chunk, not to the last.
 """
-import base64, json, struct, sys, time, urllib.request
+import base64, json, os, struct, sys, time, urllib.request
 
-BASE = (sys.argv[1] if len(sys.argv) > 1 else "http://localhost:8000").rstrip("/")
+# Default to the port the service is actually configured for, so this works
+# without arguments on a box whose .env moves LATINA_PORT off 8000.
+_PORT = os.getenv("LATINA_PORT", "8000")
+BASE = (sys.argv[1] if len(sys.argv) > 1
+        else f"http://localhost:{_PORT}").rstrip("/")
 KEY = None
 FRASES = [
     "Buenas tardes, ¿hablo con el señor Benítez?",

@@ -51,6 +51,14 @@ OPTIMIZE = os.getenv("LATINA_OPTIMIZE", "0").lower() in ("1", "true", "yes")
 # costs memory and startup time.
 LOAD_DENOISER = os.getenv("LATINA_DENOISER", "0").lower() in ("1", "true", "yes")
 
+# Cache VoxCPM2's encoded reference clip between requests. Without it every
+# request re-reads the clip from disk, resamples it to 16 kHz through librosa
+# and re-runs the audio VAE encoder — identical work every time, since the
+# result is a pure function of the file. Measured on an RTX A6000: it is the
+# single largest avoidable slice of time-to-first-chunk. Set to 0 to fall back
+# to the library's per-request path (useful for A/B measurement).
+PROMPT_CACHE = os.getenv("LATINA_PROMPT_CACHE", "1").lower() in ("1", "true", "yes")
+
 HOST = os.getenv("LATINA_HOST", "0.0.0.0")
 PORT = int(os.getenv("LATINA_PORT", "8000"))
 

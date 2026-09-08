@@ -32,6 +32,7 @@ Booleans accept `1`, `true` or `yes` (case-insensitive); anything else is false.
 | `LATINA_OPTIMIZE` | `0` | `torch.compile` the model at load. |
 | `LATINA_DENOISER` | `0` | Load VoxCPM2's denoiser for noisy reference clips. |
 | `LATINA_WARMUP` | `1` | Synthesize one throwaway line at startup so the first real request is not the cold one. |
+| `LATINA_PROMPT_CACHE` | `1` | Cache VoxCPM2's encoded reference clip between requests. `0` restores the library's per-request path. |
 
 Three of these have non-obvious reasoning behind the default.
 
@@ -62,6 +63,23 @@ cost of roughly 70 s of extra startup while it compiles.
 So: try `LATINA_OPTIMIZE=1` on an A100, L40S, 4090 or A6000, measure it, and set
 it back to `0` if the first request never returns. If someone reports "it never
 finishes loading", this is the first thing to check.
+
+### `LATINA_PROMPT_CACHE` cuts time-to-first-chunk
+
+`VoxCPM.generate()` calls `build_prompt_cache()` on **every** request, which
+re-reads the reference clip from disk, resamples it to 16 kHz through librosa
+and re-runs the audio VAE encoder. That result depends on nothing but the file,
+generation only ever reads it, and the encoder returns the posterior mean
+rather than a sample — so doing the work once per clip instead of once per
+request does not change what the model is conditioned on.
+
+With it on, the engine calls `generate_with_prompt_cache_streaming()` directly
+and keeps one cache per voice, keyed on `(path, mtime, size)` — so a clip
+re-uploaded through the studio rebuilds its own entry with nothing to
+invalidate by hand. Caches are built for every voice at startup.
+
+Set it to `0` to A/B the difference on your own hardware; the fallback path is
+the unmodified library call.
 
 ### `LATINA_CFG` / `LATINA_TIMESTEPS` — measure before you trust the folklore
 

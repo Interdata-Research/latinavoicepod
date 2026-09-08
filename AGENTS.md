@@ -272,6 +272,7 @@ server.py          HTTP entry point (uvicorn, one worker)
 handler.py         RunPod serverless entry point — same engine, different transport
 start.sh           venv + CUDA-matched torch + deps + run
 smoke_test.py      stdlib-only; times first-audio and writes out.wav
+bench_ttfc.py      stdlib-only; median/p95 TTFC, for comparing two builds
 Makefile           make setup | run | bg | test | stop | docker | clean
 latina/config.py   every setting, every one an env var
 latina/engine.py   VoxCPM2 wrapper, voice registry, audio helpers
