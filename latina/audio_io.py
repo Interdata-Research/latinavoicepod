@@ -414,7 +414,7 @@ def trash_voice(voices_dir: Path, voice_id: str) -> list[str]:
     trash.mkdir(exist_ok=True)
     stamp = int(time.time())
     moved = []
-    for suffix in (".wav", ".txt"):
+    for suffix in (".wav", ".txt", ".json"):
         src = voices_dir / f"{voice_id}{suffix}"
         if src.exists():
             dst = trash / f"{voice_id}-{stamp}{suffix}"

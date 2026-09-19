@@ -126,6 +126,29 @@ That is on purpose. It is a real telephone-band clip in the library, and it is
 the regression test for the thresholds: **if a change ever makes `es_f_19` pass,
 the thresholds are wrong.**
 
+## Languages and the English voice
+
+VoxCPM2 speaks English as well as Spanish, and it takes the language from the
+*text*, not from a flag — so one instance serves both. What decides where a
+voice appears in `/voices` is its optional sidecar:
+
+```json
+// voices/<id>.json
+{"name": "Romina", "language": "es", "gender": "F"}
+```
+
+No sidecar → `LATINA_LANGUAGE` (`es`). A malformed sidecar is ignored rather
+than hiding the voice. Studio deletes move the sidecar to `.trash/` with the clip.
+
+`default` (`voices/default.wav` + `default.json`, `language: "en"`) is the
+reference clip from **miniclosedai-voice** — the voice that service serves as
+`default` with Chatterbox Turbo. Here VoxCPM2 clones it instead: same speaker,
+different engine, so it will sound close to but not identical with the
+Chatterbox rendering. The id and catalog entry (`Default voice`, `F`) are the
+same as miniclosedai-voice's on purpose, so a bot that was set to `default` on
+that backend keeps working when pointed here, and miniclosedai's fallback
+("first English voice on the backend") lands on it.
+
 ## Voices in this repo
 
 Measured with the analyser (`LATINA_STUDIO_SR` = 24 kHz):
@@ -135,6 +158,7 @@ Measured with the analyser (`LATINA_STUDIO_SR` = 24 kHz):
 | `es_f_19` | 5.1 s | 2848 Hz | 0.44% | 28.6 dB | `poor` | bandwidth, brightness |
 | `carla` | 17.3 s | 5766 Hz | 1.49% | 23.8 dB | `poor` | duration, brightness, level |
 | `romina` | 16.1 s | 1898 Hz | 0.12% | 55.9 dB | `poor` | duration, bandwidth, brightness |
+| `default` (en) | 9.6 s | — | — | — | *not graded* | from miniclosedai-voice, 22.05 kHz |
 
 `es_f_19` is the default (`LATINA_VOICE`) — a Latin-American female with a warm
 receptionist timbre, picked by listen test. `carla` and `romina` were added

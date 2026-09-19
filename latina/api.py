@@ -2,7 +2,10 @@
 
 Endpoints:
     GET  /health          — is the model in memory yet
-    GET  /voices          — reference clips this instance serves
+    GET  /voices          — reference clips this instance serves, keyed by
+                             language ({"es": [...], "en": [...]})
+    POST /transcribe      — multipart audio → {text, language, segments}
+                             (Whisper; the ASR half of the contract)
     GET  /api/connect-info — self-description for miniclosedai's Settings UI
     POST /speak           — one WAV file (same behavior as /speak.wav) —
                              matches the miniclosedai-voice reference contract,
@@ -24,6 +27,7 @@ import json
 import os
 import queue
 import socket
+import threading
 from concurrent.futures import ThreadPoolExecutor
 import time
 from typing import Optional
@@ -34,6 +38,7 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 from . import config
+from .asr import asr
 from .engine import engine, to_pcm16, to_wav
 
 # One reusable generation thread instead of a fresh one per request.
@@ -73,6 +78,10 @@ async def _startup() -> None:
     # Loading blocks for a while; a thread keeps the event loop free so
     # /health answers "loading" instead of hanging the socket.
     await asyncio.to_thread(engine.load)
+    # ASR after TTS, in the background: /health goes ok as soon as VoxCPM2 is
+    # warm, and /transcribe waits for Whisper if it is called early.
+    if config.ASR_ENABLED:
+        threading.Thread(target=asr.load, name="latina-asr", daemon=True).start()
 
 
 @app.get("/health")
@@ -85,12 +94,28 @@ async def health():
         "default_voice": config.DEFAULT_VOICE,
         "optimize": config.OPTIMIZE,
         "loaded_at": engine.loaded_at,
+        # The fields miniclosedai's voice.py documents for /health.
+        "tts_model": config.MODEL_ID,
+        "asr_model": asr.model_id if config.ASR_ENABLED else None,
+        "asr_ready": asr.is_ready,
+        "asr_options": asr.options() if config.ASR_ENABLED else [],
+        "device": "cuda" if engine.is_ready and _cuda() else "cpu",
+        "voices_loaded": engine.is_ready,
+        "languages": sorted({v.language for v in engine.voices.values()}),
         # Matches the miniclosedai-voice reference shape. Always false here —
         # this service is TTS-only (no ASR, no /call/*, no /webrtc/offer), so
         # it must never be routed into miniclosedai's call-mode branch, which
         # gates on this exact field.
         "relay_capable": False,
     }
+
+
+def _cuda() -> bool:
+    try:
+        import torch
+        return torch.cuda.is_available()
+    except Exception:
+        return False
 
 
 def _lan_ip() -> str:
@@ -138,13 +163,18 @@ async def voices():
     client expects: {"es": [{id, name, gender}, ...]}. Register this service as
     a kind=voice backend there and it shows up in every bot's voice picker.
 
+    Each clip lands under the `language` in its `<id>.json` sidecar, or under
+    LATINA_LANGUAGE when it has none — so the Spanish clips stay under "es" and
+    `default` (miniclosedai-voice's English reference) shows up under "en".
+
     A flat list would be friendlier to read, but it would not register.
     `/voices/detail` keeps the extra fields for humans.
     """
-    return {config.DEFAULT_LANGUAGE: [
-        {"id": v.id, "name": v.id.replace("_", " "), "gender": None}
-        for v in engine.voices.values()
-    ]}
+    out: dict[str, list[dict]] = {}
+    for v in engine.voices.values():
+        out.setdefault(v.language, []).append(
+            {"id": v.id, "name": v.name, "gender": v.gender})
+    return out
 
 
 @app.get("/voices/detail")
@@ -154,6 +184,48 @@ async def voices_detail():
             "default": config.DEFAULT_VOICE,
             "language": config.DEFAULT_LANGUAGE,
             "sample_rate": engine.sample_rate}
+
+
+@app.get("/asr")
+async def asr_options():
+    """Selectable speech-recognition options: `auto` plus each configured
+    language, with the Whisper model behind it. Send the `language` value as
+    the `language` form field of /transcribe to use it."""
+    return {"enabled": config.ASR_ENABLED,
+            "options": asr.options() if config.ASR_ENABLED else []}
+
+
+@app.post("/transcribe", dependencies=[Depends(require_key)])
+async def transcribe(request: Request):
+    """Multipart `audio` (+ optional `language`) → `{text, language, model,
+    segments}`, the shape miniclosedai's `voice.transcribe()` expects.
+
+    `language` selects the ASR: `es` → the Spanish model, forced Spanish; `en`
+    → the English model, forced English; absent or `auto` → auto-detect.
+    Regional tags (`es-MX`) reduce to their base language.
+
+    Reads the form by hand instead of declaring `UploadFile`/`Form` params:
+    those make FastAPI demand python-multipart at DECORATOR time (see the
+    studio note at the bottom), and this route must not be able to break
+    import of the module that serves /speak.
+    """
+    if not config.ASR_ENABLED:
+        return JSONResponse({"error": "ASR disabled (LATINA_ASR=0)"}, status_code=503)
+    form = await request.form()
+    up = form.get("audio")
+    if up is None or not hasattr(up, "read"):
+        return JSONResponse({"error": "multipart field 'audio' is required"},
+                            status_code=400)
+    data = await up.read()
+    if not data:
+        return JSONResponse({"error": "empty audio payload"}, status_code=400)
+    lang = form.get("language") or None
+    try:
+        return await asyncio.to_thread(asr.transcribe, data, lang)
+    except ValueError as e:                      # undecodable upload
+        return JSONResponse({"error": str(e)}, status_code=400)
+    except RuntimeError as e:                    # model failed to load
+        return JSONResponse({"error": str(e)}, status_code=503)
 
 
 @app.post("/speak/stream", dependencies=[Depends(require_key)])

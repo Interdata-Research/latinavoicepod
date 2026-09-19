@@ -22,6 +22,7 @@ voices/              reference clips: <id>.wav + optional <id>.txt
                     ┌──────────────────────────────────────────┐
  HTTP  ──> api.py ──┤  /speak/stream           → SSE frames     │
                     │  /speak, /speak.wav     → one WAV body   │──> engine ──> GPU
+                    │  /transcribe (language) → JSON text      │──> asr ─────> GPU
  RunPod ─> handler ─┤  yielded dicts                           │
                     └──────────────────────────────────────────┘
 ```

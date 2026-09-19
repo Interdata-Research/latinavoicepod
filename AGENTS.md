@@ -151,12 +151,22 @@ Audio is **48 kHz, mono, little-endian int16**. Read the rate from the
 `sample_rate` field on each chunk rather than hardcoding it.
 
 Endpoints: `GET /health`, `GET /voices`, `GET /voices/detail`,
-`POST /speak`, `POST /speak/stream` (same handler), `POST /speak.wav`.
+`POST /speak`, `POST /speak/stream` (same handler), `POST /speak.wav`,
+`POST /transcribe`, `GET /asr`.
+
+Speech-to-text, per language (Spanish → large-v3, English → turbo):
+
+```bash
+curl -F audio=@out.wav -F language=es localhost:8000/transcribe   # or en, or omit
+```
 
 ## 4. Register it with miniclosedai
 
 This service already speaks miniclosedai's voice-backend protocol. Registering
-it makes the voice appear in every bot's picker there.
+it makes the voices appear in every bot's picker there (English under `en`,
+the Latina clones under `es`), and miniclosedai's per-bot **ASR** picker
+(Auto / English / Spanish) selects the Whisper model here via `/transcribe`'s
+`language`.
 
 ```bash
 curl -k -X POST https://localhost:8095/api/backends \

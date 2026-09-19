@@ -113,6 +113,20 @@ The worker count is **not** configurable, on purpose. `server.py` hardcodes
 `workers=1`: each uvicorn worker would load its own copy of the model onto the
 same GPU. Scale by running more containers.
 
+## Speech-to-text
+
+| Variable | Default | What it does |
+|---|---|---|
+| `LATINA_ASR` | `1` | `0` leaves Whisper out entirely; `/transcribe` then returns 503. Saves ~4.5 GB of VRAM with the defaults. |
+| `LATINA_ASR_MODEL` | `large-v3-turbo` | The **auto-detect** model: used when a request names no language, or one not in `LATINA_ASR_MODELS`. Whisper size (`openai/whisper-<name>`) or any HF id containing a `/`. Keep it multilingual — a `*.en` model would transcribe Spanish callers as English. |
+| `LATINA_ASR_MODELS` | `es=large-v3,en=large-v3-turbo` | Per-language models, `lang=model,…`. A request with that `language` uses that model **and forces the language**. Each distinct model loads once (turbo here serves both `en` and auto): large-v3 ≈ 3 GB, turbo ≈ 1.6 GB in fp16. |
+
+Why large-v3 for Spanish only: turbo is large-v3 with its decoder cut from 32
+layers to 4. On English the accuracy gap is within noise; on Spanish — accents,
+phone audio — large-v3 is the stronger model, and at ~1 s per turn the extra
+latency is acceptable. Every model gets one silent warm-up pass at load, which
+took the first real request from ~4.5 s to under 1 s.
+
 ## Voice studio
 
 | Variable | Default | What it does |

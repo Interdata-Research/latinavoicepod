@@ -9,6 +9,7 @@ the voice.
 
 from __future__ import annotations
 
+import json
 import re
 import threading
 import time
@@ -21,7 +22,17 @@ from . import config
 
 
 class Voice:
-    """A reference clip on disk: `<id>.wav`, plus an optional `<id>.txt`."""
+    """A reference clip on disk: `<id>.wav`, plus an optional `<id>.txt`
+    transcript and an optional `<id>.json` sidecar.
+
+    The sidecar is the same convention miniclosedai-voice uses —
+    `{"name": ..., "language": "en", "gender": "F"}` — and it is what lets one
+    instance serve voices in more than one language: `/voices` buckets each
+    clip under its `language`. No sidecar means `LATINA_LANGUAGE` (Spanish) and
+    a name derived from the id, which is exactly what `/voices` returned before
+    sidecars existed. A malformed sidecar is ignored rather than hiding the
+    voice.
+    """
 
     def __init__(self, wav: Path):
         self.id = wav.stem
@@ -30,9 +41,23 @@ class Voice:
         self.text: Optional[str] = (
             txt.read_text(encoding="utf-8").strip() if txt.is_file() else None
         )
+        meta: dict = {}
+        side = wav.with_suffix(".json")
+        if side.is_file():
+            try:
+                meta = json.loads(side.read_text(encoding="utf-8")) or {}
+            except (OSError, ValueError):
+                meta = {}
+            if not isinstance(meta, dict):
+                meta = {}
+        self.name: str = str(meta.get("name") or self.id.replace("_", " "))
+        self.language: str = str(
+            meta.get("language") or config.DEFAULT_LANGUAGE).lower()
+        self.gender: Optional[str] = meta.get("gender") or None
 
     def as_dict(self) -> dict:
-        return {"id": self.id, "reference_text": self.text}
+        return {"id": self.id, "name": self.name, "language": self.language,
+                "gender": self.gender, "reference_text": self.text}
 
 
 class LatinaVoiceEngine:

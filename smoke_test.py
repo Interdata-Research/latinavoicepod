@@ -6,8 +6,13 @@
 
 Writes out.wav so you can actually listen, and prints the latency that matters
 for a phone call: time to the FIRST audio chunk, not to the last.
+
+Then checks what miniclosedai relies on beyond Spanish TTS: `/voices` has both
+an `en` and an `es` bucket, the English voice speaks, and every ASR option in
+`/asr` transcribes a clip in its own language (Spanish with `es` and `auto`,
+English with `en`). Skip that part with SMOKE_ASR=0.
 """
-import base64, json, os, struct, sys, time, urllib.request
+import base64, json, os, struct, sys, time, urllib.request, uuid
 
 # Default to the port the service is actually configured for, so this works
 # without arguments on a box whose .env moves LATINA_PORT off 8000.
@@ -65,4 +70,47 @@ for i, texto in enumerate(FRASES, 1):
     if i == 1:
         open("out.wav", "wb").write(wav(pcm, sr))
         print("      wrote out.wav — listen to it")
+        es_clip = wav(pcm, sr)
+
+
+def transcribe(audio, language):
+    """multipart POST /transcribe, stdlib only."""
+    b = uuid.uuid4().hex
+    parts = [f'--{b}\r\nContent-Disposition: form-data; name="audio"; '
+             f'filename="a.wav"\r\nContent-Type: audio/wav\r\n\r\n'.encode()
+             + audio + b"\r\n"]
+    if language:
+        parts.append(f'--{b}\r\nContent-Disposition: form-data; '
+                     f'name="language"\r\n\r\n{language}\r\n'.encode())
+    body = b"".join(parts) + f"--{b}--\r\n".encode()
+    req = urllib.request.Request(
+        f"{BASE}/transcribe", data=body,
+        headers={"Content-Type": f"multipart/form-data; boundary={b}",
+                 **({"Authorization": f"Bearer {KEY}"} if KEY else {})})
+    return json.load(urllib.request.urlopen(req, timeout=300))
+
+
+if os.getenv("SMOKE_ASR", "1") != "0":
+    cat = json.load(urllib.request.urlopen(f"{BASE}/voices", timeout=30))
+    if not ("en" in cat and "es" in cat):
+        sys.exit(f"  ERROR: /voices lacks an en or es bucket: {sorted(cat)}")
+    en_voice = cat["en"][0]["id"]
+    print(f"  catalog: " + " · ".join(f"{k}: {len(v)}" for k, v in cat.items()))
+
+    en_clip = post("/speak", {"text": "Hello, thank you for calling. How can I help you?",
+                              "voice": en_voice}).read()
+    opts = json.load(urllib.request.urlopen(f"{BASE}/asr", timeout=30))["options"]
+    # Each option gets a clip in its own language, plus a word that must survive.
+    cases = {"es": (es_clip, "tardes"), "auto": (es_clip, "tardes"),
+             "en": (en_clip, "thank")}
+    for o in opts:
+        clip, word = cases.get(o["language"], (es_clip, "tardes"))
+        t0 = time.perf_counter()
+        r = transcribe(clip, None if o["language"] == "auto" else o["language"])
+        ms = (time.perf_counter() - t0) * 1000
+        ok = word in r["text"].lower()
+        print(f"  asr {o['language']:>4} ({r.get('model', '?').split('/')[-1]}) "
+              f"{ms:5.0f} ms · {r['text']!r}")
+        if not ok:
+            sys.exit(f"  ERROR: asr {o['language']} lost {word!r}")
 print("  OK")

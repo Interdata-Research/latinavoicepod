@@ -53,6 +53,8 @@ coding agents.
 | `POST /speak` | one WAV file back (miniclosedai-voice reference contract) |
 | `POST /speak/stream` | SSE stream of base64 int16 PCM chunks — what miniclosedai calls for chat-reply playback |
 | `POST /speak.wav` | same as `/speak`, kept as the plainer curl-friendly name |
+| `POST /transcribe` | speech-to-text (Whisper); `language=es` / `en` picks the Spanish / English model and forces it, none = auto-detect |
+| `GET /asr` | the selectable ASR options and the model behind each |
 | `GET /api/connect-info` | self-description for miniclosedai's Settings "paste this URL" flow |
 | `GET /studio/` | the voice studio GUI (`/` redirects here) |
 

@@ -14,16 +14,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this is
 
 A single-purpose FastAPI service: load VoxCPM2 into GPU memory once, serve a
-Latin-American Spanish voice over HTTP. Designed to be copied onto a GPU box and
-run. There is no database, no queue, no framework beyond FastAPI.
+Latin-American Spanish voice over HTTP — plus an English voice and Whisper
+`/transcribe`, so it is a complete miniclosedai `kind=voice` backend. Designed
+to be copied onto a GPU box and run. There is no database, no queue, no framework beyond FastAPI.
 
 ```
 server.py        entry point — uvicorn, one worker
 handler.py       RunPod serverless entry point (same engine, different transport)
 latina/config.py all settings, every one an env var
 latina/engine.py VoxCPM2 wrapper + audio helpers
-latina/api.py    the four endpoints
-voices/          reference clips: <id>.wav (+ optional <id>.txt transcript)
+latina/api.py    the endpoints
+latina/asr.py    Whisper for /transcribe — one model per language (es=large-v3,
+                 en=turbo, auto=turbo); loads + warms after VoxCPM2, in background
+voices/          reference clips: <id>.wav (+ optional <id>.txt transcript,
+                 + optional <id>.json {name, language, gender})
 ```
 
 ## Running and verifying
@@ -82,6 +86,8 @@ Two consumers depend on the exact shapes:
 
 - **miniclosedai** (`voice.py`) calls `GET /voices` expecting a dict keyed by
   language, and `POST /speak/stream`, stopping when it sees `{"done": true}`.
+  Push-to-talk also calls `POST /transcribe` (multipart `audio`) and expects
+  `{text, language, segments}`.
 - **The Mozart demo's page** stops on `{"end": true}`.
 
 So `/speak` and `/speak/stream` are the same handler, and the terminal frame
@@ -91,6 +97,24 @@ registration; `/voices/detail` holds the human-readable extras.
 
 `speed` is accepted and ignored — miniclosedai sends it, VoxCPM2 has no speed
 control, and rejecting an unknown field would fail the request.
+
+The language key comes from each voice's `<id>.json` sidecar (default
+`LATINA_LANGUAGE`). `voices/default.*` is miniclosedai-voice's English
+reference clip under its original id — keep the id, bots reference it.
+
+**ASR is selected by language, and forcing the wrong one translates.**
+`/transcribe`'s `language` (miniclosedai sends the bot's
+`voice_settings.asr_language`) picks the model from `LATINA_ASR_MODELS` and
+forces decoding in that language. Whisper then *translates* audio in another
+language instead of transcribing it — English audio + `es` came back as Spanish.
+That is Whisper, not a bug; `auto` is the answer for mixed callers.
+
+**transformers 5 quirk in `asr.py`:** passing `generate_kwargs=None` to the
+ASR pipeline is a `TypeError` (it iterates it). Omit the argument when empty.
+
+`smoke_test.py` now also checks the `en`+`es` catalog and round-trips a clip
+through every `/asr` option (`SMOKE_ASR=0` skips it). Run it after touching
+`asr.py` as well as `api.py`.
 
 ## The voice studio (web GUI)
 

@@ -86,3 +86,24 @@ STUDIO_FFMPEG_TIMEOUT = int(os.getenv("LATINA_STUDIO_FFMPEG_TIMEOUT", "20"))
 # 16 kHz before encoding (audio_vae.sample_rate), so the model only ever reads
 # 0-8 kHz; 24 kHz keeps all of that with headroom at half the size of 48 kHz.
 STUDIO_CANONICAL_SR = int(os.getenv("LATINA_STUDIO_SR", "24000"))
+
+# --- speech-to-text (POST /transcribe) ------------------------------------- #
+# The ASR half of miniclosedai's voice-backend contract (push-to-talk). Loads
+# in the background after VoxCPM2, so it never delays /health. Multilingual by
+# default because the callers speak Spanish; `medium.en` etc. also work, and
+# any HF id with a slash is used verbatim. ~1.6 GB of VRAM in fp16.
+ASR_ENABLED = os.getenv("LATINA_ASR", "1").lower() in ("1", "true", "yes")
+# Model for auto-detect (no `language` on the request, or one not listed below).
+ASR_MODEL = os.getenv("LATINA_ASR_MODEL", "large-v3-turbo")
+# Per-language models, "lang=model,lang=model". A request with `language=es`
+# uses the `es` model AND forces Spanish decoding (no guessing — short clips like
+# "sí" are where language ID goes wrong). Spanish gets full large-v3, the most
+# accurate open Whisper on Spanish; English stays on turbo, which is within
+# noise of large-v3 on English at a fraction of the latency. Models shared by
+# several entries load once. large-v3 is ~3 GB of VRAM in fp16, turbo ~1.6 GB.
+ASR_MODELS = {
+    k.strip().lower(): v.strip()
+    for k, _, v in (item.partition("=") for item in
+                    os.getenv("LATINA_ASR_MODELS", "es=large-v3,en=large-v3-turbo").split(","))
+    if k.strip() and v.strip()
+}

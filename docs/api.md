@@ -46,10 +46,21 @@ the socket answers long before generation is possible.
   "ok": true,
   "model": "openbmb/VoxCPM2",
   "sample_rate": 48000,
-  "voices": ["carla", "es_f_19", "romina"],
+  "voices": ["carla", "default", "es_f_19", "romina"],
   "default_voice": "es_f_19",
   "optimize": false,
   "loaded_at": 1757174400.12,
+  "tts_model": "openbmb/VoxCPM2",
+  "asr_model": "openai/whisper-large-v3-turbo",
+  "asr_ready": true,
+  "device": "cuda",
+  "voices_loaded": true,
+  "languages": ["en", "es"],
+  "asr_options": [
+    {"language": "auto", "model": "openai/whisper-large-v3-turbo", "ready": true},
+    {"language": "en",   "model": "openai/whisper-large-v3-turbo", "ready": true},
+    {"language": "es",   "model": "openai/whisper-large-v3",       "ready": true}
+  ],
   "relay_capable": false
 }
 ```
@@ -58,9 +69,17 @@ the socket answers long before generation is possible.
 returns `503` until it flips. **`ok:true` is the only trustworthy readiness
 signal** — see the warning in [deployment](deployment.md#waiting-for-readiness).
 
-`relay_capable` is always `false` — this service is TTS-only (no ASR, no
-`/call/*`, no `/webrtc/offer`), matching the miniclosedai-voice reference
-shape so miniclosedai never routes it into call-mode.
+`tts_model`, `asr_model`, `device` and `voices_loaded` are the fields
+miniclosedai's `voice.py` documents for `/health`; `asr_model` is the
+auto-detect model and `asr_options` the full list (same as [`GET /asr`](#get-asr)).
+`asr_ready` turns true some seconds after `ok` — the Whisper models load (and
+warm up) in the background *after* VoxCPM2, so they never delay readiness; a
+`/transcribe` that arrives early waits for them.
+
+`relay_capable` is always `false` — there is no `/call/*` or `/webrtc/offer`
+(WebRTC call mode needs direct UDP, which the RunPod HTTP proxy cannot carry
+anyway), so miniclosedai must never route this service into call mode.
+Push-to-talk (`/transcribe` + `/speak/stream`) is fully supported.
 
 ## `GET /api/connect-info`
 
@@ -82,11 +101,16 @@ Catalog **keyed by language**, because that is the shape miniclosedai's
 voice-backend client registers against.
 
 ```json
-{"es": [{"id": "es_f_19", "name": "es f 19", "gender": null}]}
+{"es": [{"id": "carla", "name": "Carla", "gender": "F"}, …],
+ "en": [{"id": "default", "name": "Default voice", "gender": "F"}]}
 ```
 
-`name` is the id with underscores replaced by spaces. `gender` is always `null`
-— nothing in the project infers it.
+Each clip is bucketed by the `language` in its `voices/<id>.json` sidecar —
+the same `{name, language, gender}` convention miniclosedai-voice uses — and
+`name`/`gender` come from there too. A clip with no sidecar lands under
+`LATINA_LANGUAGE` (`es`) with `name` = id with underscores as spaces and
+`gender: null`, which is exactly what this endpoint returned before sidecars.
+See [voices](voices.md#languages-and-the-english-voice).
 
 ## `GET /voices/detail`
 
@@ -100,6 +124,57 @@ The human-readable version, including each clip's reference transcript.
   "sample_rate": 48000
 }
 ```
+
+## `GET /asr`
+
+The selectable speech-recognition options — `auto` plus one per language in
+`LATINA_ASR_MODELS` — and the Whisper model behind each:
+
+```json
+{"enabled": true, "options": [
+  {"language": "auto", "model": "openai/whisper-large-v3-turbo", "ready": true},
+  {"language": "en",   "model": "openai/whisper-large-v3-turbo", "ready": true},
+  {"language": "es",   "model": "openai/whisper-large-v3",       "ready": true}]}
+```
+
+## `POST /transcribe`
+
+Speech-to-text, the ASR half of miniclosedai's voice contract (its push-to-talk
+path calls it via `voice.transcribe()`). Multipart form: `audio` (any container
+ffmpeg decodes — WAV, WebM/Opus from `MediaRecorder`, OGG, MP4) and an optional
+`language` that **selects the ASR**:
+
+| `language` | Model (default config) | Decoding |
+|---|---|---|
+| `es` (or `es-MX`, `es_419`…) | `whisper-large-v3` — most accurate on Spanish | forced Spanish |
+| `en` (or `en-US`…) | `whisper-large-v3-turbo` | forced English |
+| absent / `auto` | `whisper-large-v3-turbo` | Whisper detects the language per clip |
+| any other code | the auto model | forced to that code |
+
+miniclosedai sends the bot's `voice_settings.asr_language` here (its "ASR:
+Auto / English / Spanish" picker).
+
+> **Pick the language the caller actually speaks.** Forcing the *wrong* one
+> makes Whisper **translate** rather than transcribe — measured: English audio
+> with `language=es` came back as a Spanish translation, and Spanish audio with
+> `language=en` as English. Use `auto` when callers may speak either.
+
+```bash
+curl -F audio=@clip.wav -F language=es localhost:8088/transcribe
+```
+```json
+{"text": "Hola, gracias por llamar.", "language": "es",
+ "model": "openai/whisper-large-v3",
+ "segments": [{"start": 0.0, "end": 2.8, "text": " Hola, gracias por llamar."}]}
+```
+
+`language` is the base code that was forced (`null` for auto-detect); `model`
+is the Whisper that ran. Measured on the RTX A6000 through the RunPod proxy:
+~0.6–1.2 s for `es` (large-v3), ~0.2–0.7 s for `en`/`auto` (turbo) on 3–5 s
+clips. If a language's model failed to load, the request falls back to the
+auto model rather than failing. `400` for a missing or undecodable upload,
+`503` when `LATINA_ASR=0` or no model loaded. Protected by `LATINA_API_KEY`
+like the speak endpoints.
 
 ## `POST /speak/stream`
 
