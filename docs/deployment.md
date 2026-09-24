@@ -150,6 +150,15 @@ Two ways around it:
 Measure, do not assume: run `smoke_test.py` against the deployed URL and compare
 **first audio vs total**. If they are equal, you are being proxied.
 
+## Pairing behind miniclosedai-voice
+
+Set `VOICE_UPSTREAM_URL=http://<this-host>:8088` on a
+[miniclosedai-voice](https://github.com/edantonio505/miniclosedai-voice)
+instance and it serves our voices as its Spanish half, under its own URL, with
+call mode. Register **only** that service with miniclosedai in that layout.
+Nothing changes here; if this service is down its voices simply disappear from
+the front service's catalog. Full instructions: that repo's `DEPLOY.md`.
+
 ## Registering with miniclosedai
 
 The service already speaks miniclosedai's voice-backend protocol — `GET /voices`

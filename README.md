@@ -137,6 +137,36 @@ Through the Mozart demo the same call measured 279 ms.
 > Measure it, do not assume: run `smoke_test.py` against the RunPod URL and
 > compare **first audio vs total**. If they are equal, you are being proxied.
 
+## Or pair it behind miniclosedai-voice (English + Spanish on one URL)
+
+[miniclosedai-voice](https://github.com/edantonio505/miniclosedai-voice) is the
+sibling service: Chatterbox Turbo (English), Whisper, and WebRTC **call mode**,
+which this project does not have. It can treat this service as its **Spanish
+engine**, so there is one URL to register and both languages — including on
+calls:
+
+```bash
+# on the miniclosedai-voice box
+VOICE_UPSTREAM_URL=http://127.0.0.1:8088 ./start.sh -d
+```
+
+It then merges our `/voices` into its own catalog and forwards `/speak`,
+`/speak/stream` and (when its own Whisper is English-only) Spanish
+`/transcribe` here. Nothing changes on this side — it is the same protocol the
+section above describes, so this service neither knows nor cares whether its
+caller is miniclosedai itself or miniclosedai-voice in front of it.
+
+Two consequences worth knowing:
+
+- Our English `default` voice is **shadowed** in that setup: the front service
+  keeps its own `default` (Chatterbox) on an id clash. Our English voice is
+  still there for anyone calling this service directly.
+- Registering *both* services in miniclosedai instead is a valid layout, and
+  the voices then show up grouped per backend — but do not do both at once, or
+  every Spanish voice appears twice.
+
+Standing the pair up on a fresh box: **[DEPLOY.md](https://github.com/edantonio505/miniclosedai-voice/blob/main/DEPLOY.md)**.
+
 ## The voice studio
 
 `http://localhost:8000/studio/` (`/` redirects there) is a single-page GUI for
