@@ -1,0 +1,27 @@
+[start] serving on 0.0.0.0:8088
+[start] first run downloads ~5 GB of weights; ready when you see 'warmed up'
+[latina] http://0.0.0.0:8088 · voice=es_f_19 · model=openbmb/VoxCPM2
+[latina] voice studio at /studio/
+INFO:     Started server process [102462]
+INFO:     Waiting for application startup.
+/workspace/latina_voice_tts/.venv/lib/python3.11/site-packages/torch/jit/_script.py:1491: FutureWarning: `torch.jit.script` is deprecated. Please switch to `torch.compile` or `torch.export`.
+  warnings.warn(
+[latina] loading openbmb/VoxCPM2 (optimize=True, denoiser=False)…
+Fetching 9 files:   0%|          | 0/9 [00:00<?, ?it/s]Fetching 9 files: 100%|██████████| 9/9 [00:00<00:00, 1244.64it/s]
+voxcpm_model_path: /workspace/hf-cache/hub/models--openbmb--VoxCPM2/snapshots/32279effe8c19989596f05d353d1447f51d9e915, zipenhancer_model_path: None, enable_denoiser: False
+/workspace/latina_voice_tts/.venv/lib/python3.11/site-packages/torch/nn/utils/weight_norm.py:145: FutureWarning: `torch.nn.utils.weight_norm` is deprecated in favor of `torch.nn.utils.parametrizations.weight_norm`.
+  WeightNorm.apply(module, name, dim)
+Loading AudioVAE from pytorch: /workspace/hf-cache/hub/models--openbmb--VoxCPM2/snapshots/32279effe8c19989596f05d353d1447f51d9e915/audiovae.pth
+Running on device: cuda, dtype: bfloat16
+Loading model from safetensors: /workspace/hf-cache/hub/models--openbmb--VoxCPM2/snapshots/32279effe8c19989596f05d353d1447f51d9e915/model.safetensors
+Loaded VoxCPM2Model
+Warm up VoxCPMModel...
+  0%|          | 0/10 [00:00<?, ?it/s] 10%|█         | 1/10 [00:19<02:59, 19.91s/it] 20%|██        | 2/10 [00:20<01:06,  8.28s/it] 40%|████      | 4/10 [00:20<00:18,  3.15s/it] 60%|██████    | 6/10 [00:20<00:06,  1.70s/it] 80%|████████  | 8/10 [00:20<00:02,  1.06s/it]100%|██████████| 10/10 [00:20<00:00,  1.42it/s]100%|██████████| 10/10 [00:20<00:00,  2.08s/it]
+[latina] ready in 87s · 48000 Hz · voices: ['carla', 'default', 'es_f_19', 'romina']
+  0%|          | 0/70 [00:00<?, ?it/s]  3%|▎         | 2/70 [00:00<00:06, 10.94it/s]  6%|▌         | 4/70 [00:00<00:06, 10.71it/s]  9%|▊         | 6/70 [00:00<00:06, 10.63it/s] 11%|█▏        | 8/70 [00:00<00:05, 10.60it/s] 13%|█▎        | 9/70 [00:00<00:05, 10.35it/s]
+[latina] warmed up in 0.9s
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8088 (Press CTRL+C to quit)
+INFO:     100.64.1.65:46128 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:37780 - "GET /health HTTP/1.1" 200 OK
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.

@@ -139,7 +139,7 @@ Through the Mozart demo the same call measured 279 ms.
 
 ## Or pair it behind miniclosedai-voice (English + Spanish on one URL)
 
-[miniclosedai-voice](https://github.com/edantonio505/miniclosedai-voice) is the
+[miniclosedai-voice](https://github.com/Interdata-Research/miniclosedai-voice) is the
 sibling service: Chatterbox Turbo (English), Whisper, and WebRTC **call mode**,
 which this project does not have. It can treat this service as its **Spanish
 engine**, so there is one URL to register and both languages — including on
@@ -165,7 +165,7 @@ Two consequences worth knowing:
   the voices then show up grouped per backend — but do not do both at once, or
   every Spanish voice appears twice.
 
-Standing the pair up on a fresh box: **[DEPLOY.md](https://github.com/edantonio505/miniclosedai-voice/blob/main/DEPLOY.md)**.
+Standing the pair up on a fresh box: **[DEPLOY.md](https://github.com/Interdata-Research/miniclosedai-voice/blob/main/DEPLOY.md)**.
 
 ## The voice studio
 

@@ -153,7 +153,7 @@ Measure, do not assume: run `smoke_test.py` against the deployed URL and compare
 ## Pairing behind miniclosedai-voice
 
 Set `VOICE_UPSTREAM_URL=http://<this-host>:8088` on a
-[miniclosedai-voice](https://github.com/edantonio505/miniclosedai-voice)
+[miniclosedai-voice](https://github.com/Interdata-Research/miniclosedai-voice)
 instance and it serves our voices as its Spanish half, under its own URL, with
 call mode. Register **only** that service with miniclosedai in that layout.
 Nothing changes here; if this service is down its voices simply disappear from
